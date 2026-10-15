@@ -10,6 +10,7 @@ from app.db.repositories.credential import IntegrationCredentialRepository
 from app.db.repositories.follow_up_email import FollowUpEmailRepository
 from app.db.repositories.meeting import MeetingRepository
 from app.db.repositories.tenant import TenantRepository
+from app.db.repositories.user import UserRepository
 
 __all__ = [
     "ActionItemRepository",
@@ -18,4 +19,5 @@ __all__ = [
     "IntegrationCredentialRepository",
     "MeetingRepository",
     "TenantRepository",
+    "UserRepository",
 ]

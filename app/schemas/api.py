@@ -14,6 +14,7 @@ from app.db.enums import (
     MeetingSource,
     MeetingStatus,
     TargetSystem,
+    UserRole,
 )
 
 
@@ -120,3 +121,26 @@ class HealthOut(BaseModel):
     service: str
     version: str
     checks: dict[str, str] = Field(default_factory=dict)
+
+
+# ── Auth ────────────────────────────────────────────────────────────────
+class UserRegisterIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_name: str = Field(min_length=2, max_length=255)
+    email: str = Field(min_length=5, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str | None = Field(default=None, max_length=255)
+
+
+class UserOut(BaseModel):
+    id: uuid.UUID
+    email: str
+    full_name: str | None
+    role: UserRole
+    tenant_id: uuid.UUID
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

@@ -19,8 +19,9 @@ from slowapi.errors import RateLimitExceeded
 
 from app import __version__
 from app.api import websocket
-from app.api.routes import health, integrations, meetings
+from app.api.routes import auth, health, integrations, meetings
 from app.core.config import get_settings
+from app.core.middleware import RequestContextMiddleware
 from app.core.rate_limit import limiter
 from app.db.session import dispose_engine
 
@@ -63,6 +64,9 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+    # ── Middleware (request IDs + security headers) ────────────────────
+    app.add_middleware(RequestContextMiddleware, enable_hsts=settings.is_production)
+
     # ── CORS ───────────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
@@ -75,6 +79,7 @@ def create_app() -> FastAPI:
     # ── Routers ────────────────────────────────────────────────────────
     api = settings.api_prefix
     app.include_router(health.router, prefix=api)
+    app.include_router(auth.router, prefix=api)
     app.include_router(meetings.router, prefix=api)
     app.include_router(integrations.router, prefix=api)
     app.include_router(websocket.router)

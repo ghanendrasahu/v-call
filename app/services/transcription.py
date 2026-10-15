@@ -340,6 +340,22 @@ class TranscriptionService:
             # 5) Merge into the stable transcript contract.
             await emit("merging", 0.95, "Building transcript")
             utterances = merge_speakers(raw_segments, turns)
+
+            # 5b) Compliance: redact direct identifiers before storage/LLM use.
+            if self.settings.scrub_transcript_pii:
+                from app.core.compliance import redact_pii
+
+                utterances = [
+                    Utterance(
+                        speaker_label=u.speaker_label,
+                        start_ms=u.start_ms,
+                        end_ms=u.end_ms,
+                        text=redact_pii(u.text),
+                        confidence=u.confidence,
+                    )
+                    for u in utterances
+                ]
+
             await emit("merging", 1.0, "Done")
 
             return TranscriptResult(
