@@ -37,7 +37,6 @@ dependencies = [
     "tenacity>=8.5",
     "structlog>=24.4",
     "python-jose[cryptography]>=3.3",
-    "passlib[bcrypt]>=1.7",
     "python-multipart>=0.0.9",
     "websockets>=12.0",
 ]
@@ -121,7 +120,7 @@ plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
 exclude = ["alembic/versions", "build", "dist"]
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "flower.*", "pydub.*", "slowapi.*", "jose.*", "passlib.*", "langgraph.*", "langchain.*", "instructor.*", "mcp.*", "faster_whisper.*", "pyannote.*", "opentelemetry.*"]
+module = ["celery.*", "flower.*", "pydub.*", "slowapi.*", "jose.*", "langgraph.*", "langchain.*", "instructor.*", "mcp.*", "faster_whisper.*", "pyannote.*", "opentelemetry.*"]
 ignore_missing_imports = true
 
 # ── Pytest ─────────────────────────────────────────────────────────────

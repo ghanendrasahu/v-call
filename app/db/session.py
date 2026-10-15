@@ -88,12 +88,12 @@ async def dispose_engine() -> None:
 
 
 def _json_loads(value: Any) -> Any:
-    """Default JSON deserializer hook (kept identity for simplicity)."""
+    """Engine-level JSON deserializer (bytes- or text-tolerant)."""
     import json
 
     if isinstance(value, (bytes, bytearray)):
-        return json.loads(value.decode())
-    return value
+        value = value.decode()
+    return json.loads(value)
 
 
 # Re-export for convenience at call sites.
