@@ -1,7 +1,10 @@
 """Shared pytest fixtures.
 
 Environment is configured *before* any app import so settings/engine pick up
-the temporary SQLite database. Every test gets a fresh schema.
+the test database. Every test gets a fresh schema.
+
+``DATABASE_URL`` can be overridden by the environment (CI points it at a real
+PostgreSQL service); everything else is pinned for deterministic offline runs.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ import pytest
 # ── Configure env before importing app modules ──────────────────────────
 _TMP_DIR = tempfile.mkdtemp(prefix="vcall-tests-")
 os.environ.setdefault("ENVIRONMENT", "development")
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DIR}/test.db"
+os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_TMP_DIR}/test.db")
 os.environ["REDIS_URL"] = "redis://localhost:6399/0"  # unreachable → no side effects
 os.environ["JWT_SECRET"] = "test-jwt-secret-0123456789abcdefghij"
 os.environ["FERNET_KEY"] = "X_ePszmQLHCyPP_6t_hJv4WraB4-Ym40uJiLxxGWSh8="

@@ -1,7 +1,10 @@
 """Worker tests: Celery configuration, task boundaries, compliance sweep.
 
-No live Redis broker is required: tasks are exercised through their ``run``
-entrypoints with Redis-touching collaborators monkeypatched.
+No live Redis broker is required. Task logic is exercised through module-level
+async cores awaited on the test's own event loop — asyncpg pools are bound to
+the loop that created them, so DB work must not hop threads. The sync Celery
+``.run``/``_run_async`` boundary is covered by the DB-free replay and probe
+tests.
 """
 
 from __future__ import annotations
@@ -68,6 +71,14 @@ def test_expected_tasks_are_registered():
 
 
 # ── process_meeting boundary (string IDs from Celery JSON) ───────────────
+def test_run_async_executes_a_coroutine_from_sync_context():
+    async def probe() -> int:
+        await asyncio.sleep(0)
+        return 7
+
+    assert tasks._run_async(probe()) == 7
+
+
 async def test_process_meeting_unknown_id_raises_value_error():
     """String ids must be coerced to UUIDs before hitting GUID columns."""
     with pytest.raises(ValueError, match="not found"):
@@ -124,7 +135,8 @@ async def test_scrub_expired_audio_sweeps_old_recordings(tmp_path, seed_tenant_u
         await session.commit()
         old_id, fresh_id = old.id, fresh.id
 
-    result = await asyncio.to_thread(tasks.scrub_expired_audio.run)
+    # Asyncpg pools are event-loop-bound: await the core on this test's loop.
+    result = await tasks._scrub_expired_audio_async()
 
     assert result == {"scrubbed": 1}
     assert not old_audio.exists()  # securely removed from disk
@@ -159,6 +171,7 @@ async def test_replay_dead_letter_requeues_only_matching_entries(monkeypatch):
     queued: list[tuple[str, str]] = []
     monkeypatch.setattr(tasks.process_meeting, "delay", lambda *args: queued.append(args))
 
+    # Thread-hopping ``.run`` is safe here: the replay path touches no DB.
     result = await asyncio.to_thread(tasks.replay_dead_letter.run)
 
     assert result == {"replayed": 1, "skipped": 1}
@@ -168,9 +181,7 @@ async def test_replay_dead_letter_requeues_only_matching_entries(monkeypatch):
 # ── Follow-up email sender (no-op path) ──────────────────────────────────
 async def test_send_follow_up_emails_noop_without_pending():
     # Unknown meeting → nothing pending → MCP server is never spawned.
-    result = await asyncio.to_thread(
-        tasks.send_follow_up_emails.run, str(uuid.uuid4()), str(uuid.uuid4())
-    )
+    result = await tasks._send_follow_up_emails_async(str(uuid.uuid4()), str(uuid.uuid4()))
     assert result == {"sent": 0}
 
 
@@ -212,7 +223,7 @@ async def test_send_follow_up_emails_delivers_pending_drafts(seed_tenant_user, m
 
     monkeypatch.setattr("app.integrations.mcp_client.GmailMCPClient", FakeGmailClient)
 
-    result = await asyncio.to_thread(tasks.send_follow_up_emails.run, meeting_id, tenant_id)
+    result = await tasks._send_follow_up_emails_async(meeting_id, tenant_id)
 
     assert result == {"sent": 1, "total": 1}
     assert FakeGmailClient.instances[0].sent == ["a@acme.in"]

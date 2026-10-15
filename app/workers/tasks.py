@@ -207,6 +207,36 @@ def process_meeting(self, meeting_id: str, tenant_id: str) -> dict[str, Any]:
         raise
 
 
+async def _scrub_expired_audio_async() -> dict[str, int]:
+    """Delete raw audio files past the retention window (database + disk)."""
+    from sqlalchemy import select
+
+    from app.core.config import get_settings
+    from app.db.models import Meeting
+
+    cutoff = datetime.now(UTC).timestamp() - (get_settings().raw_audio_retention_hours * 3600)
+    removed = 0
+    async with session_scope() as session:
+        result = await session.execute(
+            select(Meeting).where(
+                Meeting.storage_path.is_not(None),
+                Meeting.created_at <= datetime.fromtimestamp(cutoff, tz=UTC),
+            )
+        )
+        for row in result.scalars():
+            storage = row.storage_path or ""
+
+            def _remove(p: str = storage) -> None:
+                target = Path(p)
+                if target.exists():
+                    target.unlink(missing_ok=True)
+
+            await asyncio.to_thread(_remove)
+            row.storage_path = None
+            removed += 1
+    return {"scrubbed": removed}
+
+
 @celery_app.task(
     bind=True,
     name="app.workers.tasks.scrub_expired_audio",
@@ -215,35 +245,21 @@ def process_meeting(self, meeting_id: str, tenant_id: str) -> dict[str, Any]:
 )
 def scrub_expired_audio(self) -> dict[str, int]:
     """Hourly compliance sweep: delete raw audio past the retention window."""
-    from sqlalchemy import select
+    return _run_async(_scrub_expired_audio_async())
 
-    from app.core.config import get_settings
-    from app.db.models import Meeting
 
-    async def _scrub() -> dict[str, int]:
-        cutoff = datetime.now(UTC).timestamp() - (get_settings().raw_audio_retention_hours * 3600)
-        removed = 0
-        async with session_scope() as session:
-            result = await session.execute(
-                select(Meeting).where(
-                    Meeting.storage_path.is_not(None),
-                    Meeting.created_at <= datetime.fromtimestamp(cutoff, tz=UTC),
-                )
-            )
-            for row in result.scalars():
-                storage = row.storage_path or ""
+async def _replay_dead_letter_async() -> dict[str, int]:
+    """Requeue dead-lettered ``process_meeting`` jobs (skip other tasks)."""
+    from app.workers.dead_letter import pop_dead_letter_batch
 
-                def _remove(p: str = storage) -> None:
-                    target = Path(p)
-                    if target.exists():
-                        target.unlink(missing_ok=True)
-
-                await asyncio.to_thread(_remove)
-                row.storage_path = None
-                removed += 1
-        return {"scrubbed": removed}
-
-    return _run_async(_scrub())
+    entries = await pop_dead_letter_batch()
+    replayed = 0
+    for entry in entries:
+        if entry.get("task") != "app.workers.tasks.process_meeting":
+            continue
+        process_meeting.delay(entry["meeting_id"], entry["tenant_id"])
+        replayed += 1
+    return {"replayed": replayed, "skipped": len(entries) - replayed}
 
 
 @celery_app.task(
@@ -253,20 +269,40 @@ def scrub_expired_audio(self) -> dict[str, int]:
 )
 def replay_dead_letter(self) -> dict[str, int]:
     """Periodically retry dead-lettered ``process_meeting`` jobs."""
+    return _run_async(_replay_dead_letter_async())
 
-    async def _replay() -> dict[str, int]:
-        from app.workers.dead_letter import pop_dead_letter_batch
 
-        entries = await pop_dead_letter_batch()
-        replayed = 0
-        for entry in entries:
-            if entry.get("task") != "app.workers.tasks.process_meeting":
-                continue
-            process_meeting.delay(entry["meeting_id"], entry["tenant_id"])
-            replayed += 1
-        return {"replayed": replayed, "skipped": len(entries) - replayed}
+async def _send_follow_up_emails_async(meeting_id: str, tenant_id: str) -> dict[str, Any]:
+    """Deliver pending follow-up drafts through the Gmail MCP server."""
+    from app.integrations.mcp_client import GmailMCPClient, MCPServerConfig
 
-    return _run_async(_replay())
+    # Task args arrive as JSON strings; UUID columns need uuid.UUID.
+    meeting_uuid = uuid.UUID(str(meeting_id))
+    tenant_uuid = uuid.UUID(str(tenant_id))
+
+    async with session_scope() as session:
+        emails_repo = FollowUpEmailRepository(session)
+        pending = await emails_repo.list_unsent(meeting_uuid, tenant_id=tenant_uuid)
+        if not pending:
+            return {"sent": 0}
+
+        config = MCPServerConfig(
+            command="npx",
+            args=("-y", "@google/gmail-mcp-server"),
+        )
+        sent = 0
+        gmail = GmailMCPClient(config)
+        async with gmail.connected():
+            for email in pending:
+                await gmail.send_email(
+                    to=email.recipient_email,
+                    subject=email.subject or "Meeting follow-up",
+                    body=email.email_body,
+                )
+                email.sent = True
+                email.sent_at = datetime.now(UTC)
+                sent += 1
+        return {"sent": sent, "total": len(pending)}
 
 
 @celery_app.task(
@@ -277,36 +313,4 @@ def replay_dead_letter(self) -> dict[str, int]:
 )
 def send_follow_up_emails(self, meeting_id: str, tenant_id: str) -> dict[str, Any]:
     """Send drafted follow-up emails via the Gmail MCP server."""
-
-    async def _send() -> dict[str, Any]:
-        from app.integrations.mcp_client import GmailMCPClient, MCPServerConfig
-
-        # Task args arrive as JSON strings; UUID columns need uuid.UUID.
-        meeting_uuid = uuid.UUID(str(meeting_id))
-        tenant_uuid = uuid.UUID(str(tenant_id))
-
-        async with session_scope() as session:
-            emails_repo = FollowUpEmailRepository(session)
-            pending = await emails_repo.list_unsent(meeting_uuid, tenant_id=tenant_uuid)
-            if not pending:
-                return {"sent": 0}
-
-            config = MCPServerConfig(
-                command="npx",
-                args=("-y", "@google/gmail-mcp-server"),
-            )
-            sent = 0
-            gmail = GmailMCPClient(config)
-            async with gmail.connected():
-                for email in pending:
-                    await gmail.send_email(
-                        to=email.recipient_email,
-                        subject=email.subject or "Meeting follow-up",
-                        body=email.email_body,
-                    )
-                    email.sent = True
-                    email.sent_at = datetime.now(UTC)
-                    sent += 1
-            return {"sent": sent, "total": len(pending)}
-
-    return _run_async(_send())
+    return _run_async(_send_follow_up_emails_async(meeting_id, tenant_id))

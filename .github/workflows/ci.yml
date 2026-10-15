@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Well-known CI-only test values (never used in real environments).
+env:
+  ENVIRONMENT: development
+  JWT_SECRET: ci-jwt-secret-0123456789abcdefghij000000
+  FERNET_KEY: X_ePszmQLHCyPP_6t_hJv4WraB4-Ym40uJiLxxGWSh8=
+  PYTHONUTF8: "1"
+
+jobs:
+  # ── Static gates: lint, formatting, types ────────────────────────────
+  quality:
+    name: Lint · format · pyright
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install (dev + ai extras)
+        run: pip install -e ".[dev,ai]"
+      - name: Ruff lint
+        run: ruff check app tests
+      - name: Ruff format
+        run: ruff format --check app tests
+      - name: Pyright (same engine as Pylance)
+        run: pyright app tests
+
+  # ── Fast offline suite on both supported interpreters ────────────────
+  tests:
+    name: Tests · py${{ matrix.python-version }} · sqlite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install (dev + ai extras)
+        run: pip install -e ".[dev,ai]"
+      - name: Pytest (SQLite)
+        run: pytest tests -q
+
+  # ── Production dialect: migrations + full suite on PostgreSQL ────────
+  integration:
+    name: PostgreSQL 15 · migrations · suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: vcall
+          POSTGRES_PASSWORD: vcall
+          POSTGRES_DB: vcall_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U vcall"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql+asyncpg://vcall:vcall@localhost:5432/vcall_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install (dev + ai extras)
+        run: pip install -e ".[dev,ai]"
+      # The initial migration was authored on SQLite; prove it applies on the
+      # production dialect and that models and migrations haven't drifted.
+      - name: Alembic upgrade head
+        run: alembic upgrade head
+      - name: Alembic drift check
+        run: alembic check
+      - name: Pytest (PostgreSQL)
+        run: pytest tests -q
+
+  # ── Container image builds (no push — release pipeline does that) ────
+  docker:
+    name: Docker build (runtime image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: v-call:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
