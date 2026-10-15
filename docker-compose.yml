@@ -1,0 +1,140 @@
+# ──────────────────────────────────────────────────────────────────────
+# Local / staging orchestration: API, Celery worker, beat, Flower, Redis,
+# Postgres. All secrets come from .env (never committed).
+# ──────────────────────────────────────────────────────────────────────
+name: vcall
+
+x-app-env: &app-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-vcall}:${POSTGRES_PASSWORD:-vcall}@db:5432/${POSTGRES_DB:-vcall}
+  DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-vcall}:${POSTGRES_PASSWORD:-vcall}@db:5432/${POSTGRES_DB:-vcall}
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+  FERNET_KEY: ${FERNET_KEY:?FERNET_KEY must be set}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+services:
+  # ── API ────────────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_EXTRAS: ai
+    image: vcall/web:latest
+    env_file: [.env]
+    environment: *app-env
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/opt/app/artifacts
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # ── Celery worker (audio / AI pipeline) ────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_EXTRAS: full   # worker needs torch + pyannote
+    image: vcall/worker:latest
+    env_file: [.env]
+    environment: *app-env
+    command: >
+      celery -A app.workers.celery_app.celery_app worker
+             --loglevel=info
+             --concurrency=2
+             --max-tasks-per-child=4
+             --queues=audio,agents,default
+             -Ofair
+    volumes:
+      - ./artifacts:/opt/app/artifacts
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Celery beat (scheduled compliance scrub + retries) ─────────────
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_EXTRAS: ai
+    image: vcall/beat:latest
+    env_file: [.env]
+    environment: *app-env
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    depends_on:
+      - redis
+      - db
+    restart: unless-stopped
+
+  # ── Flower (task monitoring) ───────────────────────────────────────
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_EXTRAS: ai
+    image: vcall/flower:latest
+    env_file: [.env]
+    environment: *app-env
+    command: celery -A app.workers.celery_app.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - worker
+    restart: unless-stopped
+
+  # ── Redis (broker, cache, rate-limit) ──────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── PostgreSQL 15 ──────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vcall}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vcall}
+      POSTGRES_DB: ${POSTGRES_DB:-vcall}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-vcall}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pg_data:
+  redis_data:

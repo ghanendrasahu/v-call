@@ -1,0 +1,144 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "v-call"
+version = "0.1.0"
+description = "AI Meeting Intelligence Platform: transcription, multi-agent orchestration, and SaaS integrations."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "ghanendrasahu", email = "ghanendrasahu2911@gmail.com" }]
+keywords = ["meeting-intelligence", "asr", "diarization", "langgraph", "fastapi", "multi-tenant"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Operating System :: OS Independent",
+]
+
+# ── Core runtime (kept lean & async-native) ────────────────────────────
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8,<3.0",
+    "pydantic-settings>=2.4,<3.0",
+    "sqlalchemy[asyncio]>=2.0.30",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "celery[redis]>=5.4",
+    "redis>=5.0",
+    "flower>=2.0",
+    "slowapi>=0.1.9",
+    "cryptography>=42.0",
+    "pydub>=0.25",
+    "httpx>=0.27",
+    "tenacity>=8.5",
+    "structlog>=24.4",
+    "python-jose[cryptography]>=3.3",
+    "passlib[bcrypt]>=1.7",
+    "python-multipart>=0.0.9",
+    "websockets>=12.0",
+]
+
+# ── LLM orchestration (no torch) ───────────────────────────────────────
+orchestration = [
+    "langgraph>=0.2.60",
+    "langchain-openai>=0.1.20",
+    "langchain-core>=0.3.0",
+    "openai>=1.40",
+    "instructor>=1.4",
+    "langsmith>=0.1.20",
+]
+
+# ── Model Context Protocol ─────────────────────────────────────────────
+mcp = [
+    "mcp>=1.2.0",
+]
+
+# ── Heavy local audio/ML stack (torch-based) ───────────────────────────
+transcription = [
+    "faster-whisper>=1.0",
+    "pyannote.audio>=3.3",
+    "torch>=2.3",
+]
+
+# ── Observability ──────────────────────────────────────────────────────
+observability = [
+    "opentelemetry-api>=1.26",
+    "opentelemetry-sdk>=1.26",
+    "opentelemetry-instrumentation-fastapi>=0.47b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.47b0",
+    "opentelemetry-instrumentation-celery>=0.47b0",
+    "opentelemetry-exporter-otlp>=1.26",
+]
+
+[project.optional-dependencies]
+ai = ["v-call[orchestration,mcp]"]
+full = ["v-call[ai,transcription,observability]"]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.14",
+    "asgi-lifespan>=2.1",
+    "aiosqlite>=0.20",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/ghanendrasahu/v-call"
+Repository = "https://github.com/ghanendrasahu/v-call"
+
+[project.scripts]
+vcall-api = "app.main:run"
+vcall-worker = "app.workers.celery_app:run_worker"
+vcall-beat = "app.workers.celery_app:run_beat"
+
+# ── Packaging ──────────────────────────────────────────────────────────
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# ── Ruff ───────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["alembic/versions", ".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "ASYNC", "B", "SIM", "RUF"]
+ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "ARG001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# ── mypy ───────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+exclude = ["alembic/versions", "build", "dist"]
+
+[[tool.mypy.overrides]]
+module = ["celery.*", "flower.*", "pydub.*", "slowapi.*", "jose.*", "passlib.*", "langgraph.*", "langchain.*", "instructor.*", "mcp.*", "faster_whisper.*", "pyannote.*", "opentelemetry.*"]
+ignore_missing_imports = true
+
+# ── Pytest ─────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers --strict-config"
+markers = [
+    "integration: tests that require external services (postgres, redis)",
+    "slow: long-running tests (model load, large audio)",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
