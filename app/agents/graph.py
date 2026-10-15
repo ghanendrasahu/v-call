@@ -23,15 +23,16 @@ logger = logging.getLogger(__name__)
 MAX_EXTRACTION_RETRIES = 2
 
 
-def _has_extraction_errors(state: MeetingState) -> bool:
-    return any(err.startswith("extraction:") for err in state.get("errors", []))
-
-
 def route_after_extraction(
     state: MeetingState,
 ) -> Literal["sentiment", "extraction"]:
-    """Retry extraction on failure (bounded), otherwise continue."""
-    if not _has_extraction_errors(state):
+    """Retry extraction on failure (bounded), otherwise continue.
+
+    Consults ``extraction_failed`` (written by the extraction node for the
+    *latest* attempt) rather than the append-only ``errors`` ledger — a stale
+    error must not force retries after a successful attempt.
+    """
+    if not state.get("extraction_failed"):
         return "sentiment"
     retries = state.get("retry_count", 0)
     if retries < MAX_EXTRACTION_RETRIES:

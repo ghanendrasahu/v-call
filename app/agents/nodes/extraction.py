@@ -52,7 +52,7 @@ def make_extraction_node(llm: Any | None = None) -> Any:
             )
         except Exception as exc:
             logger.exception("Extraction failed for meeting %s", state.get("meeting_id"))
-            return {"errors": [f"extraction: {exc}"]}
+            return {"errors": [f"extraction: {exc}"], "extraction_failed": True}
 
         action_items = [
             {
@@ -68,6 +68,7 @@ def make_extraction_node(llm: Any | None = None) -> Any:
             "action_items": action_items,
             "decisions_made": result.decisions_made,
             "unresolved_debates": result.unresolved_debates,
+            "extraction_failed": False,
         }
 
     return extraction_node

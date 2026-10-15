@@ -201,7 +201,11 @@ async def get_follow_up_emails(
     return [FollowUpEmailOut.model_validate(e) for e in meeting.follow_up_emails]
 
 
-@router.post("/{meeting_id}/reprocess", response_model=MeetingAccepted)
+@router.post(
+    "/{meeting_id}/reprocess",
+    response_model=MeetingAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 @limiter.limit(rate_limit_heavy)
 async def reprocess_meeting(
     request: Request,

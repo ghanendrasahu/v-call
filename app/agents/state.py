@@ -63,6 +63,11 @@ class MeetingState(TypedDict):
     # Error & retry bookkeeping
     errors: Annotated[list[str], _merge_lists]
     retry_count: NotRequired[int]
+    #: True only while the *latest* extraction attempt failed. The errors
+    #: ledger is append-only (and de-duplicating), so the router must consult
+    #: this flag instead — otherwise one transient failure would burn every
+    #: retry even after a successful attempt.
+    extraction_failed: NotRequired[bool]
 
 
 # ── Structured LLM output schemas (Instructor / with_structured_output) ─

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -50,13 +51,17 @@ async def _publish_progress(
 
 async def _process_meeting_async(meeting_id: str, tenant_id: str) -> dict[str, Any]:
     """Async core of the pipeline (runs inside the Celery event loop)."""
+    # Celery JSON-serialises task arguments to strings, but UUID-column
+    # filters/bind params require uuid.UUID — coerce once at the boundary.
+    meeting_uuid = uuid.UUID(str(meeting_id))
+    tenant_uuid = uuid.UUID(str(tenant_id))
 
     async def on_progress(event: TranscriptionProgress) -> None:
         await _publish_progress(meeting_id, event.stage, event.progress, event.message)
 
     async with session_scope() as session:
         meetings = MeetingRepository(session)
-        meeting = await meetings.get_with_details(meeting_id, tenant_id=tenant_id)
+        meeting = await meetings.get_with_details(meeting_uuid, tenant_id=tenant_uuid)
         if meeting is None:
             raise ValueError(f"Meeting {meeting_id} not found for tenant {tenant_id}")
 
@@ -76,8 +81,8 @@ async def _process_meeting_async(meeting_id: str, tenant_id: str) -> dict[str, A
             audio_metadata=result.audio_metadata.model_dump(),
         )
         await meetings.attach_segments(
-            meeting_id,
-            tenant_id,
+            meeting_uuid,
+            tenant_uuid,
             [
                 {
                     "speaker_label": u.speaker_label,
@@ -105,8 +110,8 @@ async def _process_meeting_async(meeting_id: str, tenant_id: str) -> dict[str, A
         from app.db.models import AgentRun
 
         run = AgentRun(
-            meeting_id=meeting_id,
-            tenant_id=tenant_id,
+            meeting_id=meeting_uuid,
+            tenant_id=tenant_uuid,
             status=AgentRunStatus.RUNNING,
         )
         session.add(run)
@@ -136,8 +141,8 @@ async def _process_meeting_async(meeting_id: str, tenant_id: str) -> dict[str, A
         # ── 3) Persist agent outputs ───────────────────────────────
         action_items = ActionItemRepository(session)
         items = await action_items.replace_for_meeting(
-            meeting_id=meeting_id,
-            tenant_id=tenant_id,
+            meeting_id=meeting_uuid,
+            tenant_id=tenant_uuid,
             items=final_state.get("action_items", []),
         )
         # The graph already dispatched items (external_id present) — mark them.
@@ -146,18 +151,18 @@ async def _process_meeting_async(meeting_id: str, tenant_id: str) -> dict[str, A
             if external_id:
                 await action_items.mark_dispatched(
                     item.id,
-                    tenant_id=tenant_id,
+                    tenant_id=tenant_uuid,
                     external_id=external_id,
                 )
             elif state.get("status") == "failed":
                 await action_items.mark_status(
-                    item.id, tenant_id=tenant_id, status=ActionItemStatus.FAILED
+                    item.id, tenant_id=tenant_uuid, status=ActionItemStatus.FAILED
                 )
 
         emails = FollowUpEmailRepository(session)
         await emails.replace_for_meeting(
-            meeting_id=meeting_id,
-            tenant_id=tenant_id,
+            meeting_id=meeting_uuid,
+            tenant_id=tenant_uuid,
             emails=final_state.get("follow_up_emails", []),
         )
 
@@ -276,9 +281,13 @@ def send_follow_up_emails(self, meeting_id: str, tenant_id: str) -> dict[str, An
     async def _send() -> dict[str, Any]:
         from app.integrations.mcp_client import GmailMCPClient, MCPServerConfig
 
+        # Task args arrive as JSON strings; UUID columns need uuid.UUID.
+        meeting_uuid = uuid.UUID(str(meeting_id))
+        tenant_uuid = uuid.UUID(str(tenant_id))
+
         async with session_scope() as session:
             emails_repo = FollowUpEmailRepository(session)
-            pending = await emails_repo.list_unsent(meeting_id, tenant_id=tenant_id)
+            pending = await emails_repo.list_unsent(meeting_uuid, tenant_id=tenant_uuid)
             if not pending:
                 return {"sent": 0}
 
