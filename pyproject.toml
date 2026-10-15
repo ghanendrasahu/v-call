@@ -42,29 +42,24 @@ dependencies = [
     "websockets>=12.0",
 ]
 
-# ── LLM orchestration (no torch) ───────────────────────────────────────
-orchestration = [
+[project.optional-dependencies]
+# LLM orchestration (no torch).
+ai = [
     "langgraph>=0.2.60",
     "langchain-openai>=0.1.20",
     "langchain-core>=0.3.0",
     "openai>=1.40",
     "instructor>=1.4",
     "langsmith>=0.1.20",
-]
-
-# ── Model Context Protocol ─────────────────────────────────────────────
-mcp = [
     "mcp>=1.2.0",
 ]
-
-# ── Heavy local audio/ML stack (torch-based) ───────────────────────────
+# Heavy local audio/ML stack (torch-based).
 transcription = [
     "faster-whisper>=1.0",
     "pyannote.audio>=3.3",
     "torch>=2.3",
 ]
-
-# ── Observability ──────────────────────────────────────────────────────
+# OpenTelemetry tracing.
 observability = [
     "opentelemetry-api>=1.26",
     "opentelemetry-sdk>=1.26",
@@ -73,10 +68,9 @@ observability = [
     "opentelemetry-instrumentation-celery>=0.47b0",
     "opentelemetry-exporter-otlp>=1.26",
 ]
-
-[project.optional-dependencies]
-ai = ["v-call[orchestration,mcp]"]
-full = ["v-call[ai,transcription,observability]"]
+full = [
+    "v-call[ai,transcription,observability]",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
