@@ -12,14 +12,38 @@ Queues
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any, overload
+
 from celery import Celery
+from celery.app.task import Task
 from kombu import Queue
 
 from app.core.config import get_settings
 
+
+class TypedCelery(Celery):
+    """Celery application class with a typed ``task`` decorator.
+
+    Upstream ``Celery.task`` is unannotated, so type checkers would infer
+    decorated names as plain functions and reject ``.delay``/``.run``. The
+    overloads restore ``Task`` typing; the implementation is a pure
+    delegation to ``super()`` (zero runtime behaviour change).
+    """
+
+    @overload
+    def task(self, fn: Callable[..., Any]) -> Task: ...
+
+    @overload
+    def task(self, **opts: Any) -> Callable[[Callable[..., Any]], Task]: ...
+
+    def task(self, *args: Any, **opts: Any) -> Any:
+        return super().task(*args, **opts)
+
+
 settings = get_settings()
 
-celery_app = Celery(
+celery_app = TypedCelery(
     "vcall",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,

@@ -62,7 +62,9 @@ def create_app() -> FastAPI:
 
     # ── Rate limiting ──────────────────────────────────────────────────
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    # slowapi's handler narrows `exc` beyond FastAPI's `ExceptionHandler`
+    # signature (reportArgumentType false positive — runtime is correct).
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
 
     # ── Middleware (request IDs + security headers) ────────────────────
     app.add_middleware(RequestContextMiddleware, enable_hsts=settings.is_production)
@@ -99,7 +101,7 @@ def create_app() -> FastAPI:
 def _try_instrument(app: FastAPI) -> None:
     """Attach OTel instrumentation when the observability extra is present."""
     try:
-        from opentelemetry.instrumentation.fastapi import (
+        from opentelemetry.instrumentation.fastapi import (  # type: ignore
             FastAPIInstrumentor,
         )
 

@@ -197,7 +197,8 @@ def _pick_silence_point(
     best_ms, best_db = ideal_ms, float("inf")
     step = 100
     for position in range(start, end - step, step):
-        window = audio[position : position + step]
+        # pydub types step-slices as a generator; ours never has a step.
+        window: AudioSegment = audio[position : position + step]  # type: ignore
         dbfs = window.dBFS
         # pydub reports -inf for pure silence; treat as quietest possible.
         rms = dbfs if dbfs != float("-inf") else -120.0

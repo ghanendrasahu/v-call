@@ -120,8 +120,12 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached settings singleton."""
-    return Settings()
+    """Cached settings singleton.
+
+    ``jwt_secret``/``fernet_key`` are deliberately required (fail fast) and
+    supplied by the environment — hence the ignore below.
+    """
+    return Settings()  # type: ignore
 
 
 def clear_settings_cache() -> None:

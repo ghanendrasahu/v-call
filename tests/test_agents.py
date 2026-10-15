@@ -7,6 +7,8 @@ network or model weights are needed.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from app.agents.graph import (
@@ -129,7 +131,7 @@ def _base_state(**overrides) -> MeetingState:
         "errors": [],
         "retry_count": 0,
     }
-    state.update(overrides)
+    state.update(cast(Any, overrides))  # free-form scenario overrides
     return state
 
 
@@ -325,7 +327,7 @@ async def test_full_graph_happy_path():
     )
 
     assert extraction.calls == 1
-    assert final["retry_count"] == 0
+    assert final.get("retry_count") == 0
     assert final["errors"] == []
     assert final["decisions_made"] == EXTRACTION.decisions_made
     assert final["unresolved_debates"] == EXTRACTION.unresolved_debates
@@ -354,7 +356,7 @@ async def test_graph_retries_transient_extraction_failure():
     )
 
     # One retry was consumed and the pipeline still produced real output.
-    assert final["retry_count"] == 1
+    assert final.get("retry_count") == 1
     assert final["action_items"] != []
     assert final["sentiment_analysis"]["overall"] == "positive"
     # The transient error remains on the errors ledger for observability.
@@ -379,7 +381,7 @@ async def test_graph_bounds_extraction_retries_and_continues_degraded():
 
     # Initial attempt + MAX retries, then sentiment/email still ran.
     assert failing_extraction.calls == MAX_EXTRACTION_RETRIES + 1
-    assert final["retry_count"] == MAX_EXTRACTION_RETRIES
+    assert final.get("retry_count") == MAX_EXTRACTION_RETRIES
     assert final["action_items"] == []
     assert final["sentiment_analysis"]["overall"] == "positive"
     # Identical failures collapse to one entry in the de-duplicating ledger.

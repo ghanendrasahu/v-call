@@ -51,7 +51,9 @@ async def pop_dead_letter_batch(limit: int = REPLAY_BATCH) -> list[dict[str, Any
     try:
         entries: list[dict[str, Any]] = []
         for _ in range(limit):
-            raw = await client.rpop(DLQ_KEY)
+            # redis-py annotates async commands with the *sync* ResponseT, so
+            # the await needs an ignore; decode_responses=True → str | None.
+            raw: str | None = await client.rpop(DLQ_KEY)  # type: ignore
             if raw is None:
                 break
             entries.append(json.loads(raw))
@@ -64,6 +66,6 @@ async def dlq_depth() -> int:
     """Number of parked tasks."""
     client = _redis()
     try:
-        return int(await client.llen(DLQ_KEY))
+        return int(await client.llen(DLQ_KEY))  # type: ignore  # sync ResponseT
     finally:
         await client.aclose()

@@ -65,7 +65,7 @@ async def _status_connector(status: int, *, body: bytes = b"{}", headers=None):
         (422, IntegrationError),
     ],
 )
-async def test_request_maps_client_errors(status: int, expected: type[Exception]):
+async def test_request_maps_client_errors(status: int, expected: type[IntegrationError]):
     connector = await _status_connector(status, body=b'{"detail": "nope"}')
     with pytest.raises(expected) as exc:
         await connector._request("GET", "https://example.test/x")

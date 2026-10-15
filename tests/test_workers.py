@@ -134,7 +134,8 @@ async def test_scrub_expired_audio_sweeps_old_recordings(tmp_path, seed_tenant_u
         repo = MeetingRepository(session)
         old_row = await repo.get(old_id, tenant_id=tenant.id)
         fresh_row = await repo.get(fresh_id, tenant_id=tenant.id)
-        assert old_row.storage_path is None  # pointer cleared
+        assert old_row is not None and old_row.storage_path is None  # cleared
+        assert fresh_row is not None
         assert fresh_row.storage_path == str(fresh_audio)
 
 

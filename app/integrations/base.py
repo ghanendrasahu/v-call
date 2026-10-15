@@ -10,7 +10,7 @@ Responsibilities every connector inherits:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Self
 
 import httpx
 from tenacity import (
@@ -70,7 +70,7 @@ class BaseConnector:
         self._max_attempts = max_attempts
 
     # ── Lifecycle ──────────────────────────────────────────────────────
-    async def __aenter__(self) -> BaseConnector:
+    async def __aenter__(self) -> Self:
         await self.open()
         return self
 

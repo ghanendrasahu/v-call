@@ -119,6 +119,7 @@ async def test_inactive_user_rejected(anon_client, seed_tenant_user):
     _, user, token = seed_tenant_user
     async with get_session_factory()() as session:
         row = await session.get(type(user), user.id)
+        assert row is not None
         row.is_active = False
         await session.commit()
 

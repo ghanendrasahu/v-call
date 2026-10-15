@@ -70,7 +70,9 @@ class BaseRepository(Generic[ModelT]):
             self.model.tenant_id == tenant_id,  # type: ignore[attr-defined]
         )
         result = await self.session.execute(stmt)
-        return bool(result.rowcount)
+        # execute() is typed as Result, but DELETE yields a CursorResult
+        # (rowcount) at runtime.
+        return bool(result.rowcount)  # type: ignore
 
     async def count(self, *, tenant_id: uuid.UUID) -> int:
         """Count rows for a tenant."""

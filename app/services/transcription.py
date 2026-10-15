@@ -106,7 +106,7 @@ class FasterWhisperBackend:
     def _load(self):
         if self._model is None:
             try:
-                from faster_whisper import WhisperModel
+                from faster_whisper import WhisperModel  # type: ignore
             except ImportError as exc:  # pragma: no cover - exercised in prod images
                 raise TranscriptionError(
                     "faster-whisper is not installed. "
@@ -156,7 +156,7 @@ class PyannoteDiarizer:
     def _load(self):
         if self._pipeline is None:
             try:
-                from pyannote.audio import Pipeline
+                from pyannote.audio import Pipeline  # type: ignore
             except ImportError as exc:  # pragma: no cover - exercised in prod images
                 raise DiarizationError(
                     "pyannote.audio is not installed. "

@@ -212,9 +212,9 @@ async def test_credentials_are_encrypted_at_rest():
             access_token="rotated-token",
         )
         assert rotated.id == credential.id
-        assert (
-            await repo.get_decrypted(tenant.id, IntegrationProvider.ZOHO_CRM)
-        ).access_token == "rotated-token"
+        rotated_row = await repo.get_decrypted(tenant.id, IntegrationProvider.ZOHO_CRM)
+        assert rotated_row is not None
+        assert rotated_row.access_token == "rotated-token"
 
         # The masked view never leaks plaintext.
         masked = repo.masked_view(credential)
@@ -260,6 +260,7 @@ async def test_replace_for_meeting_is_idempotent():
         assert len(stored) == len(second) == 2  # replaced, not duplicated
         assert {i.id for i in stored} == {i.id for i in second}
         high = next(i for i in stored if i.task == "Do the thing")
+        assert high.due_date is not None
         assert high.due_date.isoformat() == "2026-10-30"
         assert high.priority == ActionItemPriority.HIGH
 
