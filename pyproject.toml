@@ -136,3 +136,9 @@ markers = [
     "slow: long-running tests (model load, large audio)",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+show_missing = true

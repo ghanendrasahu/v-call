@@ -93,7 +93,7 @@ jobs:
       - name: Alembic drift check
         run: alembic check
       - name: Pytest (PostgreSQL)
-        run: pytest tests -q
+        run: pytest tests --cov=app --cov-report=term-missing --cov-fail-under=78
 
   # ── Container image builds (no push — release pipeline does that) ────
   docker:
