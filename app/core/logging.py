@@ -17,15 +17,17 @@ from __future__ import annotations
 import logging
 
 import structlog
+from structlog.typing import EventDict
 
 DEFAULT_LOG_LEVEL = "INFO"
 
 
-def add_logger_name(logger: object, _method_name: str, event_dict: dict) -> dict:
+def add_logger_name(logger: object, _method_name: str, event_dict: EventDict) -> EventDict:
     """Attach the originating logger name (stdlib records and structlog alike)."""
     record: logging.LogRecord | None = event_dict.get("_record")
     event_dict.setdefault(
-        "logger", record.name if record is not None else getattr(logger, "name", "?")  # type: ignore[attr-defined]
+        "logger",
+        record.name if record is not None else getattr(logger, "name", "?"),
     )
     return event_dict
 
@@ -37,7 +39,7 @@ def configure_logging(*, json_logs: bool = False, level: str = DEFAULT_LOG_LEVEL
     duplicating output.
     """
     timestamp = structlog.processors.TimeStamper(fmt="%Y-%m-%dT%H:%M:%S%z", key="ts")
-    pre_chain = [
+    pre_chain: list[structlog.typing.Processor] = [
         add_logger_name,
         # Pulls fields bound via ``structlog.contextvars`` (e.g. request_id set
         # by RequestContextMiddleware) into every record.
@@ -47,7 +49,9 @@ def configure_logging(*, json_logs: bool = False, level: str = DEFAULT_LOG_LEVEL
         structlog.processors.StackInfoRenderer(),
     ]
     renderer: structlog.typing.Processor
-    tail = [structlog.stdlib.ProcessorFormatter.remove_processors_meta]
+    tail: list[structlog.typing.Processor] = [
+        structlog.stdlib.ProcessorFormatter.remove_processors_meta
+    ]
     if json_logs:
         renderer = structlog.processors.JSONRenderer()
         tail.append(structlog.processors.format_exc_info)
