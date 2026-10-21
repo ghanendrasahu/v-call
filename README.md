@@ -67,7 +67,20 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
+## Observability
+
+Logging is powered by **structlog over stdlib**: every module logger
+(`app/*`, `vcall.access`) emits the same record shape — `ts`, `level`,
+`logger`, `event` — and `RequestContextMiddleware` binds the `request_id` so
+every line during a request is correlated.
+
+- Human-readable console output (default)
+- `LOG_JSON=true` → single-line JSON for aggregators
+- `LOG_LEVEL` controls verbosity (default `INFO`); OpenTelemetry tracing is
+  available via the `observability` extra
+
 ## Module map
+
 
 | Path | Responsibility |
 | --- | --- |

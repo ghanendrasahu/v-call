@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # ── Runtime ───────────────────────────────────────────────────────
     environment: Literal["development", "staging", "production"] = "development"
     log_level: str = "INFO"
+    # Emit application logs as single-line JSON (log aggregators). Default:
+    # human-readable console output for local development.
+    log_json: bool = False
     api_prefix: str = "/api/v1"
     service_name: str = "v-call"
 

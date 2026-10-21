@@ -15,6 +15,7 @@ import logging
 import time
 import uuid
 
+import structlog
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger("vcall.access")
@@ -40,6 +41,8 @@ class RequestContextMiddleware:
         request_id = headers.get("x-request-id") or uuid.uuid4().hex
         scope.setdefault("state", {})
         scope["state"]["request_id"] = request_id
+        # Every log line emitted while handling this request carries the id.
+        structlog.contextvars.bind_contextvars(request_id=request_id)
 
         path = scope.get("path", "")
         start = time.perf_counter()
@@ -69,6 +72,7 @@ class RequestContextMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
+            structlog.contextvars.clear_contextvars()
             if path not in _EXEMPT_PATHS:
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 logger.info(
