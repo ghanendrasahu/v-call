@@ -33,12 +33,18 @@ def get_chat_model(model: str | None = None, temperature: float = 0.0) -> Any:
     }
     if settings.openai_api_key is not None:
         kwargs["api_key"] = settings.openai_api_key.get_secret_value()
+    if settings.openai_base_url:
+        kwargs["base_url"] = settings.openai_base_url
     return ChatOpenAI(**kwargs)
 
 
 def get_structured_model(schema: type[SchemaT], *, model: str | None = None) -> Any:
-    """Chat model bound to a Pydantic schema via function-calling."""
-    return get_chat_model(model).with_structured_output(schema)
+    """Chat model bound to a Pydantic schema via function-calling.
+
+    Tool calling is used explicitly because OpenAI-compatible gateways such as
+    Groq reject ``json_schema`` response formats for nested Pydantic models.
+    """
+    return get_chat_model(model).with_structured_output(schema, method="function_calling")
 
 
 async def invoke_structured(llm_with_schema: Any, prompt: str) -> Any:

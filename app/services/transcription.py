@@ -33,12 +33,23 @@ from app.services.audio import (
     AudioInfo,
     chunk_audio,
     cleanup_chunks,
+    ffmpeg_available,
     validate_audio,
 )
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[TranscriptionProgress], Awaitable[None]]
+
+
+def _module_available(name: str) -> bool:
+    """True when an optional module can be imported (namespace-safe)."""
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
 
 
 class TranscriptionError(Exception):
@@ -143,6 +154,97 @@ class FasterWhisperBackend:
             language=getattr(info, "language", None),
             duration_seconds=float(info.duration) if getattr(info, "duration", None) else None,
         )
+
+
+class GroqWhisperBackend:
+    """Cloud ASR through Groq's OpenAI-compatible transcription endpoint.
+
+    Avoids the torch/faster-whisper stack entirely, so it runs within a free
+    512 MB web instance. Groq's free tier caps uploads at 25 MB.
+    """
+
+    MAX_BYTES = 25 * 1024 * 1024
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
+        self.name = f"groq/{self._settings.groq_asr_model}"
+
+    def transcribe(self, path: Path, *, language: str | None = None) -> ASROutput:
+        import mimetypes
+
+        import httpx
+
+        if self._settings.groq_api_key is None:
+            raise TranscriptionError(
+                "GROQ_API_KEY is not configured; set it or use local faster-whisper."
+            )
+
+        path = Path(path)
+        if path.stat().st_size > self.MAX_BYTES:
+            raise TranscriptionError(
+                "Audio exceeds Groq's 25 MB transcription limit; install ffmpeg "
+                "so the pipeline can split it into smaller chunks."
+            )
+
+        data: dict[str, str] = {
+            "model": self._settings.groq_asr_model,
+            "response_format": "verbose_json",
+            "temperature": "0",
+        }
+        if language:
+            data["language"] = language
+
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        try:
+            with path.open("rb") as handle:
+                response = httpx.post(
+                    f"{self._settings.groq_base_url.rstrip('/')}/audio/transcriptions",
+                    headers={
+                        "Authorization": (
+                            f"Bearer {self._settings.groq_api_key.get_secret_value()}"
+                        )
+                    },
+                    data=data,
+                    files={"file": (path.name, handle, mime)},
+                    timeout=300,
+                )
+        except httpx.HTTPError as exc:
+            raise TranscriptionError(f"Groq transcription request failed: {exc}") from exc
+
+        if response.status_code >= 400:
+            raise TranscriptionError(
+                f"Groq transcription failed ({response.status_code}): {response.text[:300]}"
+            )
+
+        payload = response.json()
+        segments = [
+            RawSegment(
+                start=float(item["start"]),
+                end=float(item["end"]),
+                text=str(item.get("text", "")).strip(),
+                confidence=(
+                    float(item["avg_logprob"]) if item.get("avg_logprob") is not None else None
+                ),
+            )
+            for item in payload.get("segments", [])
+            if str(item.get("text", "")).strip()
+        ]
+        return ASROutput(
+            segments=segments,
+            language=payload.get("language"),
+            duration_seconds=(
+                float(payload["duration"]) if payload.get("duration") is not None else None
+            ),
+        )
+
+
+class SingleSpeakerDiarizer:
+    """Fallback when the pyannote/torch stack is unavailable."""
+
+    name = "none"
+
+    def diarize(self, path: Path) -> Sequence[SpeakerTurn]:
+        return ()
 
 
 class PyannoteDiarizer:
@@ -265,13 +367,23 @@ class TranscriptionService:
     @property
     def asr_backend(self) -> ASRBackend:
         if self._asr is None:
-            self._asr = FasterWhisperBackend(self.settings)
+            mode = self.settings.asr_backend
+            use_groq = mode == "groq" or (mode == "auto" and self.settings.groq_api_key is not None)
+            self._asr = (
+                GroqWhisperBackend(self.settings)
+                if use_groq
+                else FasterWhisperBackend(self.settings)
+            )
         return self._asr
 
     @property
     def diarizer_backend(self) -> Diarizer:
         if self._diarizer is None:
-            self._diarizer = PyannoteDiarizer(self.settings)
+            mode = self.settings.diarizer_backend
+            if mode == "none" or (mode == "auto" and not _module_available("pyannote.audio")):
+                self._diarizer = SingleSpeakerDiarizer()
+            else:
+                self._diarizer = PyannoteDiarizer(self.settings)
         return self._diarizer
 
     async def transcribe_file(
@@ -285,6 +397,7 @@ class TranscriptionService:
         """Run the full pipeline over one audio file."""
         path = Path(path)
         chunks: list[AudioChunk] = []
+        direct = False
 
         async def emit(stage: str, progress: float, message: str | None = None) -> None:
             if on_progress is not None:
@@ -297,14 +410,27 @@ class TranscriptionService:
             await emit("validating", 0.0, "Probing audio stream")
             info: AudioInfo = await validate_audio(path)
 
-            # 2) Chunk if the file is large (or explicitly forced).
+            # 2) Chunk if the file is large (or explicitly forced). Without
+            #    ffmpeg we hand the original file straight to ASR instead of
+            #    failing on a decode we cannot perform.
             await emit("chunking", 0.05, "Preparing audio chunks")
             force = force_chunk or info.size_bytes > CHUNK_THRESHOLD_BYTES
-            chunks = (
-                await chunk_audio(path)
-                if force
-                else await chunk_audio(path, chunk_seconds=max(int(info.duration_seconds) + 1, 30))
-            )
+            if force:
+                chunks = await chunk_audio(path)
+            elif not ffmpeg_available():
+                direct = True
+                chunks = [
+                    AudioChunk(
+                        path=path,
+                        index=0,
+                        start_seconds=0.0,
+                        duration_seconds=info.duration_seconds,
+                    )
+                ]
+            else:
+                chunks = await chunk_audio(
+                    path, chunk_seconds=max(int(info.duration_seconds) + 1, 30)
+                )
 
             # 3) Transcribe each chunk sequentially (GPU/CPU friendly) and
             #    re-base timestamps onto the original timeline.
@@ -372,5 +498,6 @@ class TranscriptionService:
             )
         finally:
             # 6) Always clean up intermediate chunks (compliance: no stray audio).
-            if chunks:
+            #    Never delete the uploaded original when we bypassed chunking.
+            if chunks and not direct:
                 await asyncio.to_thread(cleanup_chunks, chunks)

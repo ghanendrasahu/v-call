@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     Form,
     HTTPException,
@@ -54,6 +55,7 @@ def _uploads_dir(tenant_id: uuid.UUID) -> Path:
 @limiter.limit(rate_limit_heavy)
 async def upload_meeting(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile,
     title: str = Form(..., min_length=1, max_length=500),
     source: MeetingSource = Form(default=MeetingSource.UPLOAD),
@@ -100,10 +102,15 @@ async def upload_meeting(
         created_by_id=context.user_id,
         storage_path=str(destination),
     )
+    # Background tasks run before FastAPI's dependency teardown, so commit
+    # here: the worker opens its own session and must see this row.
+    await session.commit()
 
     from app.workers.tasks import process_meeting
 
-    process_meeting.delay(str(meeting.id), str(context.tenant_id))
+    # Run after the 202 is sent. Starlette executes sync callables in a worker
+    # thread, which also keeps eager Celery's ``asyncio.run`` off the loop.
+    background_tasks.add_task(process_meeting.delay, str(meeting.id), str(context.tenant_id))
     logger.info("Queued meeting %s for tenant %s", meeting.id, context.tenant_id)
 
     return MeetingAccepted(

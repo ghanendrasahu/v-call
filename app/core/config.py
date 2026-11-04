@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
+    # Run tasks inside the web process (needed when the host has no free
+    # background worker). The memory result backend avoids a Redis round-trip.
+    celery_task_always_eager: bool = False
 
     # ── Secrets (required — app fails fast if unset) ──────────────────
     jwt_secret: SecretStr = Field(..., min_length=32)
@@ -57,14 +60,23 @@ class Settings(BaseSettings):
     # ── LLM providers ─────────────────────────────────────────────────
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-4o-mini"
+    # Point the OpenAI-compatible client at Groq/another gateway.
+    openai_base_url: str | None = None
     anthropic_api_key: SecretStr | None = None
     langsmith_tracing: bool = False
     langsmith_api_key: SecretStr | None = None
 
     # ── Transcription ─────────────────────────────────────────────────
+    # "auto" uses Groq when a key is configured, otherwise local faster-whisper.
+    asr_backend: Literal["auto", "faster-whisper", "groq"] = "auto"
     whisper_model: str = "small"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
+    groq_api_key: SecretStr | None = None
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_asr_model: str = "whisper-large-v3-turbo"
+    # "auto" uses pyannote only when the optional torch stack is installed.
+    diarizer_backend: Literal["auto", "pyannote", "none"] = "auto"
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     pyannote_token: SecretStr | None = None
     audio_chunk_seconds: int = 600

@@ -40,6 +40,11 @@ async def push_dead_letter(entry: dict[str, Any]) -> None:
         pipe.lpush(DLQ_KEY, json.dumps(record, default=str))
         pipe.ltrim(DLQ_KEY, 0, MAX_DLQ_SIZE - 1)
         await pipe.execute()
+    except Exception:
+        # The DLQ is best-effort: never mask the original task failure when
+        # Redis is unavailable (e.g. eager tasks on a free web instance).
+        logger.warning("Could not persist dead-letter entry", exc_info=True)
+        return
     finally:
         await client.aclose()
     logger.error("Dead-lettered task: %s", record.get("task"))

@@ -43,14 +43,23 @@ class TypedCelery(Celery):
 
 settings = get_settings()
 
+# Eager tasks run inside the web process, so their results live in memory
+# rather than Redis (which may not be provisioned on free hosts).
+_result_backend = (
+    "cache+memory://" if settings.celery_task_always_eager else settings.celery_result_backend
+)
+
 celery_app = TypedCelery(
     "vcall",
     broker=settings.celery_broker_url,
-    backend=settings.celery_result_backend,
+    backend=_result_backend,
     include=["app.workers.tasks"],
 )
 
 celery_app.conf.update(
+    # ── Execution mode ────────────────────────────────────────────────
+    task_always_eager=settings.celery_task_always_eager,
+    task_eager_propagates=False,
     # ── Serialization ──────────────────────────────────────────────
     task_serializer="json",
     result_serializer="json",
