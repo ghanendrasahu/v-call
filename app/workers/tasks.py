@@ -177,6 +177,36 @@ async def _process_meeting_async(meeting_id: str, tenant_id: str) -> dict[str, A
         }
 
 
+async def process_meeting_inline(meeting_id: str, tenant_id: str) -> dict[str, Any]:
+    """Run the pipeline in the web process and event loop (eager mode).
+
+    Celery's eager mode executes tasks synchronously; if that happens in a
+    worker thread, ``asyncio.run`` would create a second event loop while the
+    shared async database engine is bound to the server loop. Running the
+    coroutine directly keeps everything on one loop.
+    """
+    try:
+        return await _process_meeting_async(meeting_id, tenant_id)
+    except Exception as exc:  # surfacing the failure through the meeting row
+        logger.exception("Inline pipeline failed for %s", meeting_id)
+        try:
+            async with session_scope() as session:
+                meetings = MeetingRepository(session)
+                meeting = await meetings.get(
+                    uuid.UUID(meeting_id),
+                    tenant_id=uuid.UUID(tenant_id),
+                )
+                if meeting is not None:
+                    await meetings.update_status(
+                        meeting,
+                        MeetingStatus.FAILED,
+                        error=str(exc)[:2000],
+                    )
+        except Exception:  # failure reporting must not mask the original cause
+            logger.exception("Could not mark meeting %s as failed", meeting_id)
+        return {"meeting_id": meeting_id, "error": str(exc)}
+
+
 @celery_app.task(
     bind=True,
     name="app.workers.tasks.process_meeting",

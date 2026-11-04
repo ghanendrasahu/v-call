@@ -106,11 +106,22 @@ async def upload_meeting(
     # here: the worker opens its own session and must see this row.
     await session.commit()
 
-    from app.workers.tasks import process_meeting
+    from app.workers.tasks import process_meeting, process_meeting_inline
 
-    # Run after the 202 is sent. Starlette executes sync callables in a worker
-    # thread, which also keeps eager Celery's ``asyncio.run`` off the loop.
-    background_tasks.add_task(process_meeting.delay, str(meeting.id), str(context.tenant_id))
+    # Run after the 202 is sent. In eager mode the pipeline executes on this
+    # event loop (no worker thread, no second loop for the async engine).
+    if settings.celery_task_always_eager:
+        background_tasks.add_task(
+            process_meeting_inline,
+            str(meeting.id),
+            str(context.tenant_id),
+        )
+    else:
+        background_tasks.add_task(
+            process_meeting.delay,
+            str(meeting.id),
+            str(context.tenant_id),
+        )
     logger.info("Queued meeting %s for tenant %s", meeting.id, context.tenant_id)
 
     return MeetingAccepted(
@@ -217,6 +228,7 @@ async def get_follow_up_emails(
 async def reprocess_meeting(
     request: Request,
     meeting_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     context: TenantContext = Depends(get_current_context),
     session: AsyncSession = Depends(get_db),
 ) -> MeetingAccepted:
@@ -232,10 +244,23 @@ async def reprocess_meeting(
         )
 
     from app.db.enums import MeetingStatus
-    from app.workers.tasks import process_meeting
+    from app.workers.tasks import process_meeting, process_meeting_inline
 
     await repo.update_status(meeting, MeetingStatus.PENDING, error=None)
-    process_meeting.delay(str(meeting.id), str(context.tenant_id))
+    await session.commit()
+
+    if get_settings().celery_task_always_eager:
+        background_tasks.add_task(
+            process_meeting_inline,
+            str(meeting.id),
+            str(context.tenant_id),
+        )
+    else:
+        background_tasks.add_task(
+            process_meeting.delay,
+            str(meeting.id),
+            str(context.tenant_id),
+        )
     return MeetingAccepted(
         meeting_id=meeting.id,
         status=meeting.status,
