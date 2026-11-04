@@ -33,7 +33,6 @@ from app.services.audio import (
     AudioInfo,
     chunk_audio,
     cleanup_chunks,
-    ffmpeg_available,
     validate_audio,
 )
 
@@ -410,14 +409,15 @@ class TranscriptionService:
             await emit("validating", 0.0, "Probing audio stream")
             info: AudioInfo = await validate_audio(path)
 
-            # 2) Chunk if the file is large (or explicitly forced). Without
-            #    ffmpeg we hand the original file straight to ASR instead of
-            #    failing on a decode we cannot perform.
+            # 2) Chunk only when the file is large or explicitly forced.
+            #    Re-encoding a small upload just to normalize it is wasteful and
+            #    can produce unusable audio when ffmpeg is partially available;
+            #    hand the original file straight to ASR instead.
             await emit("chunking", 0.05, "Preparing audio chunks")
             force = force_chunk or info.size_bytes > CHUNK_THRESHOLD_BYTES
             if force:
                 chunks = await chunk_audio(path)
-            elif not ffmpeg_available():
+            else:
                 direct = True
                 chunks = [
                     AudioChunk(
@@ -427,10 +427,6 @@ class TranscriptionService:
                         duration_seconds=info.duration_seconds,
                     )
                 ]
-            else:
-                chunks = await chunk_audio(
-                    path, chunk_seconds=max(int(info.duration_seconds) + 1, 30)
-                )
 
             # 3) Transcribe each chunk sequentially (GPU/CPU friendly) and
             #    re-base timestamps onto the original timeline.

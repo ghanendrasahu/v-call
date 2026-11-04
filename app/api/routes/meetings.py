@@ -93,6 +93,14 @@ async def upload_meeting(
         destination.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
+    logger.info(
+        "Stored upload for meeting %s (%d bytes, %s) at %s",
+        meeting_id,
+        size_bytes,
+        fmt,
+        destination,
+    )
+
     # 3) Persist + enqueue.
     repo = MeetingRepository(session)
     meeting = await repo.create(

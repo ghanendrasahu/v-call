@@ -84,6 +84,7 @@ class MeetingDetail(MeetingSummary):
     action_items: list[ActionItemOut] = Field(default_factory=list)
     follow_up_emails: list[FollowUpEmailOut] = Field(default_factory=list)
     sentiment: SentimentOut | None = None
+    error: str | None = None
 
 
 class MeetingAccepted(BaseModel):
